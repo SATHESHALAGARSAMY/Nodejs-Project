@@ -3,7 +3,6 @@ const dayjs = require('dayjs');
 const auth = require('../../middleware/apiKey');
 const functions = require('../../middleware/apiKey');
 const db = getDatabase();
-const logger = require("../../middleware/logger");
 
 /**
  * Get user list
@@ -13,7 +12,6 @@ const logger = require("../../middleware/logger");
  */
 const getUserList = async (req, res) => {
     try {
-        logger.logWithLabel("getUserList", req.body);
         const token = req.headers['cl-x-event-id'];
         const tokenDecryptInfo = await functions.tokenDecrypt(token);
         let filter = '';
@@ -35,7 +33,6 @@ const getUserList = async (req, res) => {
                 role_name: user.role_name
             });
         }
-        logger.logWithLabel("getUserList", userList);
         return res.json({
             code: 200,
             success: true,
