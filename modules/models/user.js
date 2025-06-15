@@ -3,14 +3,12 @@ const dayjs = require('dayjs');
 const auth = require('../../middleware/apiKey');
 const { v4: uuidv4 } = require('uuid');
 const db = getDatabase();
-const logger = require("../../middleware/logger");
 
 // Common function to create user with specified role
 const createUserWithRole = async (email, password, accountId, roleId, userType) => {
     if (!email || !password || !accountId) {
         throw new Error('Missing required fields');
     }
-    logger.logWithLabel("createUserWithRole", { email, password, accountId, roleId, userType });
     // Check if email already exists
     const checkEmailSql = 'SELECT COUNT(*) as count FROM users WHERE email = ?';
     const emailCheckResult = await db.get(checkEmailSql, [email]);
@@ -45,7 +43,6 @@ const createUserWithRole = async (email, password, accountId, roleId, userType) 
  */
 const createUser = async (req, res) => {
     try {
-        logger.logWithLabel("createUser", req.body);
         const { email, password, accountId } = req.body;
         const response = await createUserWithRole(email, password, accountId, 2, 'User');
         return res.json(response);
@@ -67,7 +64,6 @@ const createUser = async (req, res) => {
  */
 const createAdmin = async (req, res) => {
     try {
-        logger.logWithLabel("createAdmin", req.body);
         const { email, password, accountId } = req.body;
         const response = await createUserWithRole(email, password, accountId, 1, 'Admin');
         return res.json(response);
@@ -89,7 +85,6 @@ const createAdmin = async (req, res) => {
  */
 const login = async (req, res) => {
     try {
-        logger.logWithLabel("login", req.body);
         const { email, password } = req.body;
         
         // Get user with role information
