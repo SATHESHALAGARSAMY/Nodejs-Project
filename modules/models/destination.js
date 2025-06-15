@@ -1,6 +1,5 @@
 const { getDatabase } = require('../../db');
 const dayjs = require('dayjs');
-const logger = require("../../middleware/logger");
 
 const db = getDatabase();
 
@@ -11,7 +10,6 @@ const db = getDatabase();
  */
 const createDestination = async (req, res) => {
     try {
-        logger.logWithLabel("createDestination", req.body);
         const { accountId, url, httpMethod } = req.body;
         if (!accountId || !url || !httpMethod) {
             throw new Error('Missing required fields');
@@ -52,7 +50,6 @@ const createDestination = async (req, res) => {
  */
 const getAllDestinations = async (req, res) => {
     try {
-        logger.logWithLabel("getAllDestinations", req.params);
         const sql = 'SELECT d.*, a.* FROM destinations AS d INNER JOIN accounts AS a ON d.account_id = a.account_id WHERE d.account_id = ? AND d.status = "Y" AND a.status = "Y"';
         const result = await db.all(sql, [req.params.accountId]);
         if(!result){
@@ -70,7 +67,6 @@ const getAllDestinations = async (req, res) => {
                 updatedAt: destination.updated_at
             });
         }
-        logger.logWithLabel("getAllDestinations", destinationList);
         return res.json({
             code: 200,
             success: true,
@@ -94,7 +90,6 @@ const getAllDestinations = async (req, res) => {
  */
 const getDestinationById = async (req, res) => {
     try {
-        logger.logWithLabel("getDestinationById", req.params);
         const sql = 'SELECT d.*, a.* FROM destinations AS d INNER JOIN accounts AS a ON d.account_id = a.account_id WHERE d.destination_id = ? AND d.status = "Y" AND a.status = "Y"';
         const result = await db.get(sql, [req.params.destinationId]);
         if(!result){
@@ -113,7 +108,6 @@ const getDestinationById = async (req, res) => {
             }
             destinationData.push(destinations);
         }
-        logger.logWithLabel("getDestinationById", destinationData);
         return res.json({
             code: 200,
             success: true,
@@ -137,7 +131,6 @@ const getDestinationById = async (req, res) => {
  */
 const updateDestinationById = async (req, res) => {
         try {
-        logger.logWithLabel("updateDestinationById", req.body);
         const { destinationId } = req.body;
         if (!destinationId) {
             throw new Error('Missing destinationId');
@@ -206,7 +199,6 @@ const updateDestinationById = async (req, res) => {
 
 const deleteDestinationById = async (req, res) => {
     try {
-        logger.logWithLabel("deleteDestinationById", req.body);
         const { destinationId } = req.body;
         if (!destinationId) {
             throw new Error('Missing required fields');
@@ -237,7 +229,6 @@ const deleteDestinationById = async (req, res) => {
 
 const deleteAllDestinationsByAccountId = async (req, res) => {
     try {
-        logger.logWithLabel("deleteAllDestinationsByAccountId", req.body);
         const { accountId } = req.body;
         if (!accountId) {
             throw new Error('Missing required fields');
