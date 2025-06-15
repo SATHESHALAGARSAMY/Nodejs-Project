@@ -9,7 +9,6 @@ const createError = require('http-errors');
 const accountRoutes = require('./mainRoutes/main');
 const indexRoutes = require('./mainRoutes/index');
 const rateLimit = require("express-rate-limit");
-const logger = require("morgan");
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -25,7 +24,6 @@ app.set("views", "./views");
 // Middleware
 app.use(cors());
 app.use(express.json());
-app.use(logger("dev"));
 app.use(express.urlencoded({ extended: false }));
 
 // Static files
