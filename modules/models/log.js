@@ -11,7 +11,6 @@ const db = getDatabase();
  */
 const createLog = async (req) => {
     try{
-        logger.logWithLabel("createLog", req.body);
         const { accountId, destinationId, receivedTimestamp, receivedData, status } = req.body;
         const sql = 'INSERT INTO logs (account_id, destination_id, received_timestamp, received_data, status) VALUES (?, ?, ?, ?, ?)';
         const result = await db.run(sql, [accountId, destinationId, receivedTimestamp, receivedData, status]);
@@ -36,7 +35,6 @@ const createLog = async (req) => {
  */
 const getLogs = async (req, res) => {
     try{
-        logger.logWithLabel("getLogs", req.body);
         const { accountId, destinationId, startDate, endDate } = req.body;
         let filter = '';
         if(accountId){
@@ -64,7 +62,6 @@ const getLogs = async (req, res) => {
                 status: data.status
             });
         }   
-        logger.logWithLabel("getLogs", logData);
         return res.json({
             code: 200,
             success: true,
