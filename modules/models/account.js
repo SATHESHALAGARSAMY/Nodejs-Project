@@ -2,7 +2,6 @@ const { getDatabase } = require('../../db');
 const dayjs = require('dayjs');
 const apiKey = require("../../middleware/apiKey");
 const { createLog } = require('./log');
-const logger = require("../../middleware/logger");
 
 const db = getDatabase();
 
@@ -13,7 +12,6 @@ const db = getDatabase();
  */
 const createAccount = async (req, res) => {
     try {
-        logger.logWithLabel("createAccount", req.body);
         const { accountId, email, accountName, website } = req.body;
         if (!accountId || !email || !accountName || !website || !appSecretToken) {
             throw new Error('Missing required fields');
@@ -65,7 +63,6 @@ const createAccount = async (req, res) => {
  */
 const getAccounts = async (req, res) => {
     try {
-        logger.logWithLabel("getAccounts", req.params);
         const { date } = req.params;
         const sql = 'SELECT * FROM accounts WHERE created_at = ? AND status = "Y"';
         const result = await db.all(sql, [dayjs(date).format('YYYY-MM-DD')]);
@@ -84,7 +81,6 @@ const getAccounts = async (req, res) => {
                 updatedAt: data.updated_at
             });
         }   
-        logger.logWithLabel("getAccounts", accountData);
         return res.json({
             code: 200,
             success: true,
@@ -108,7 +104,6 @@ const getAccounts = async (req, res) => {
  */
 const getAccountById = async (req, res) => {
     try {
-        logger.logWithLabel("getAccountById", req.params);
         const { accountId } = req.params;
         const sql = 'SELECT * FROM accounts WHERE account_id = ? AND status = "Y"';
         const result = await db.get(sql, [accountId]);
@@ -127,7 +122,6 @@ const getAccountById = async (req, res) => {
                 updatedAt: data.updated_at
             });
         }
-        logger.logWithLabel("getAccountById", accountData);
         return res.json({
             code: 200,
             success: true,
@@ -152,7 +146,6 @@ const getAccountById = async (req, res) => {
 
 const updateAccountById = async (req, res) => {
     try {
-        logger.logWithLabel("updateAccountById", req.params);
         const { accountId } = req.params;
         if (!accountId) {
             throw new Error('Account ID is required');
@@ -223,7 +216,6 @@ const updateAccountById = async (req, res) => {
  */
 const deleteAccountById = async (req, res) => {
     try {
-        logger.logWithLabel("deleteAccountById", req.params);
         const { accountId } = req.params;
         const sql = 'UPDATE accounts SET status = "D" WHERE account_id = ?';
         const result = await db.run(sql, [accountId]);
