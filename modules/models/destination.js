@@ -1,5 +1,6 @@
 const { getDatabase } = require('../../db');
 const dayjs = require('dayjs');
+const { v4: uuidv4 } = require('uuid');
 
 const db = getDatabase();
 
@@ -10,78 +11,136 @@ const db = getDatabase();
  */
 const createDestination = async (req, res) => {
     try {
-        const { accountId, url, httpMethod } = req.body;
-        if (!accountId || !url || !httpMethod) {
-            throw new Error('Missing required fields');
+        const { accountId, url, httpMethod, headers } = req.body;
+        const createdBy = req.user?.user_id;
+        
+        if (!accountId || !url || !httpMethod || !headers) {
+            return res.status(400).json({
+                success: false,
+                message: 'Missing required fields'
+            });
         }
-        //Insert logs
-        const log = await createLog({
-            accountId: accountId,
-            destinationId: 1,
-            receivedTimestamp: dayjs().format('YYYY-MM-DD HH:mm:ss'),
-            receivedData: JSON.stringify(req.body),
-            status: 'success'
+
+        // Validate headers is an object
+        if (typeof headers !== 'object') {
+            return res.status(400).json({
+                success: false,
+                message: 'Headers must be an object'
+            });
+        }
+
+        const destinationId = uuidv4();
+        const timestamp = dayjs().format('YYYY-MM-DD HH:mm:ss');
+        const headersString = JSON.stringify(headers);
+
+        const sql = 'INSERT INTO destinations (destination_id, account_id, url, http_method, headers, created_at, updated_at, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)';
+        db.run(sql, [destinationId, accountId, url, httpMethod.toUpperCase(), headersString, timestamp, timestamp, createdBy], async function(err) {
+            if (err) {
+                console.error('Error creating destination:', err);
+                return res.status(500).json({
+                    success: false,
+                    message: 'Failed to create destination'
+                });
+            }
+
+            return res.json({
+                success: true,
+                message: 'Destination created successfully',
+                data: {
+                    destinationId,
+                    accountId,
+                    url,
+                    httpMethod: httpMethod.toUpperCase(),
+                    headers
+                }
+            });
         });
-        if(log.status === 'error'){
-            throw new Error('Failed to create log');
-        }
-        const sql = 'INSERT INTO destinations (account_id, url, http_method, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)';
-        const result = await db.run(sql, [accountId, url, httpMethod, dayjs().format('YYYY-MM-DD HH:mm:ss'), dayjs().format('YYYY-MM-DD HH:mm:ss')]);
-        return res.json({
-            code: 200,
-            success: true,
-            message: 'Destination created successfully',
-            result
-        })
     } catch (error) {
         console.error('Error creating destination:', error);
-        return res.json({
-            code: 500,
+        return res.status(500).json({
             success: false,
-            message: error.message || 'Failed to create destination'
-        })
+            message: 'Failed to create destination'
+        });
     }
-}
+};
 
 /**
- * Get all destinations
+ * Get all destinations for an account
  * @param {Object} req - The request object
  * @param {Object} res - The response object
  */
-const getAllDestinations = async (req, res) => {
+const getDestinationsByAccountId = async (req, res) => {
     try {
-        const sql = 'SELECT d.*, a.* FROM destinations AS d INNER JOIN accounts AS a ON d.account_id = a.account_id WHERE d.account_id = ? AND d.status = "Y" AND a.status = "Y"';
-        const result = await db.all(sql, [req.params.accountId]);
-        if(!result){
-            throw new Error('No destinations found');
-        }
-        let destinationList = [];   
-        for(const destination of result){
-            destinationList.push({
-                destinationId: destination.destination_id,
-                accountId: destination.account_id,
-                url: destination.url,
-                httpMethod: destination.http_method,
-                headers: destination.headers,
-                createdAt: destination.created_at,
-                updatedAt: destination.updated_at
+        const { accountId } = req.params;
+        const { page = 1, limit = 10 } = req.query;
+        const offset = (page - 1) * limit;
+
+        // Get total count
+        const countSql = 'SELECT COUNT(*) as count FROM destinations WHERE account_id = ? AND status = "Y"';
+        db.get(countSql, [accountId], (err, countResult) => {
+            if (err) {
+                console.error('Database error:', err);
+                return res.status(500).json({
+                    success: false,
+                    message: 'Database error'
+                });
+            }
+
+            const totalCount = countResult.count;
+
+            // Get destinations
+            const sql = `
+                SELECT d.* 
+                FROM destinations d 
+                WHERE d.account_id = ? AND d.status = "Y"
+                ORDER BY d.created_at DESC
+                LIMIT ? OFFSET ?
+            `;
+            
+            db.all(sql, [accountId, parseInt(limit), parseInt(offset)], async (err, destinations) => {
+                if (err) {
+                    console.error('Database error:', err);
+                    return res.status(500).json({
+                        success: false,
+                        message: 'Database error'
+                    });
+                }
+
+                const destinationList = destinations.map(destination => ({
+                    destinationId: destination.destination_id,
+                    accountId: destination.account_id,
+                    url: destination.url,
+                    httpMethod: destination.http_method,
+                    headers: JSON.parse(destination.headers),
+                    createdAt: destination.created_at,
+                    updatedAt: destination.updated_at
+                }));
+
+                const response = {
+                    data: destinationList,
+                    pagination: {
+                        total: totalCount,
+                        page: parseInt(page),
+                        limit: parseInt(limit),
+                        totalPages: Math.ceil(totalCount / limit)
+                    }
+                };
+
+                return res.json({
+                    success: true,
+                    message: 'Destinations fetched successfully',
+                    ...response
+                });
             });
-        }
-        return res.json({
-            code: 200,
-            success: true,
-            message: 'Destinations fetched successfully',
-            data: destinationList
-        })
+        });
     } catch (error) {
         console.error('Error fetching destinations:', error);
-        return res.json({
-            code: 500,
+        return res.status(500).json({
             success: false,
-            message: error.message || 'Failed to fetch destinations'
-        })
+            message: 'Failed to fetch destinations'
+        });
     }
-}
+};
 
 /**
  * Get destination by id
@@ -90,39 +149,49 @@ const getAllDestinations = async (req, res) => {
  */
 const getDestinationById = async (req, res) => {
     try {
-        const sql = 'SELECT d.*, a.* FROM destinations AS d INNER JOIN accounts AS a ON d.account_id = a.account_id WHERE d.destination_id = ? AND d.status = "Y" AND a.status = "Y"';
-        const result = await db.get(sql, [req.params.destinationId]);
-        if(!result){
-            throw new Error('Destination not found');
-        }
-        let destinationData = [];
-        for(const data of result){
-            let destinations = {
-                destinationId: data.destination_id,
-                accountId: data.account_id,
-                url: data.url,
-                httpMethod: data.http_method,
-                headers: data.headers,
-                createdAt: data.created_at,
-                updatedAt: data.updated_at
+        const { destinationId } = req.params;
+
+        const sql = 'SELECT * FROM destinations WHERE destination_id = ? AND status = "Y"';
+        db.get(sql, [destinationId], async (err, destination) => {
+            if (err) {
+                console.error('Database error:', err);
+                return res.status(500).json({
+                    success: false,
+                    message: 'Database error'
+                });
             }
-            destinationData.push(destinations);
-        }
-        return res.json({
-            code: 200,
-            success: true,
-            message: 'Destination fetched successfully',
-            data: destinationData
-        })
+
+            if (!destination) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Destination not found'
+                });
+            }
+
+            const destinationData = {
+                destinationId: destination.destination_id,
+                accountId: destination.account_id,
+                url: destination.url,
+                httpMethod: destination.http_method,
+                headers: JSON.parse(destination.headers),
+                createdAt: destination.created_at,
+                updatedAt: destination.updated_at
+            };
+
+            return res.json({
+                success: true,
+                message: 'Destination fetched successfully',
+                data: destinationData
+            });
+        });
     } catch (error) {
         console.error('Error fetching destination:', error);
-        return res.json({
-            code: 500,
+        return res.status(500).json({
             success: false,
-            message: error.message || 'Failed to fetch destination'
-        })
+            message: 'Failed to fetch destination'
+        });
     }
-}
+};
 
 /**
  * Update destination by id
@@ -130,10 +199,15 @@ const getDestinationById = async (req, res) => {
  * @param {Object} res - The response object
  */
 const updateDestinationById = async (req, res) => {
-        try {
-        const { destinationId } = req.body;
+    try {
+        const { destinationId } = req.params;
+        const updatedBy = req.user?.user_id;
+
         if (!destinationId) {
-            throw new Error('Missing destinationId');
+            return res.status(400).json({
+                success: false,
+                message: 'Missing destinationId'
+            });
         }
 
         // Build the SQL query dynamically
@@ -141,121 +215,125 @@ const updateDestinationById = async (req, res) => {
         const values = [];
 
         const fieldMappings = {
-            accountId: 'account_id',
             url: 'url',
             httpMethod: 'http_method',
+            headers: 'headers'
         };
 
         for (const [key, field] of Object.entries(fieldMappings)) {
             if (req.body[key]) {
-                fieldsToUpdate.push(`${field} = ?`);
-                values.push(req.body[key]);
+                if (key === 'headers') {
+                    fieldsToUpdate.push(`${field} = ?`);
+                    values.push(JSON.stringify(req.body[key]));
+                } else if (key === 'httpMethod') {
+                    fieldsToUpdate.push(`${field} = ?`);
+                    values.push(req.body[key].toUpperCase());
+                } else {
+                    fieldsToUpdate.push(`${field} = ?`);
+                    values.push(req.body[key]);
+                }
             }
+        }
+
+        if (fieldsToUpdate.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'No fields to update'
+            });
         }
 
         // Always update the updated_at field
         fieldsToUpdate.push('updated_at = ?');
+        fieldsToUpdate.push('updated_by = ?');
         values.push(dayjs().format('YYYY-MM-DD HH:mm:ss'));
-
-        if (fieldsToUpdate.length === 0) {
-            throw new Error('No fields to update');
-        }
-        //Insert logs
-        const log = await createLog({
-            accountId: accountId,
-            destinationId: 1,
-            receivedTimestamp: dayjs().format('YYYY-MM-DD HH:mm:ss'),
-            receivedData: JSON.stringify(req.body),
-            status: 'success'
-        });
-        if(log.status === 'error'){
-            throw new Error('Failed to create log');
-        }
-        const sql = `UPDATE destinations SET ${fieldsToUpdate.join(', ')} WHERE destination_id = ? AND status = "Y"`;
+        values.push(updatedBy);
         values.push(destinationId);
 
-        const result = await db.run(sql, values);
-        return res.json({
-            code: 200,
-            success: true,
-            message: 'Destination updated successfully',
-            result
+        const sql = `UPDATE destinations SET ${fieldsToUpdate.join(', ')} WHERE destination_id = ? AND status = "Y"`;
+
+        db.run(sql, values, async function(err) {
+            if (err) {
+                console.error('Error updating destination:', err);
+                return res.status(500).json({
+                    success: false,
+                    message: 'Failed to update destination'
+                });
+            }
+
+            if (this.changes === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Destination not found'
+                });
+            }
+
+            return res.json({
+                success: true,
+                message: 'Destination updated successfully'
+            });
         });
     } catch (error) {
         console.error('Error updating destination:', error);
-        return res.json({
-            code: 500,
+        return res.status(500).json({
             success: false,
-            message: error.message || 'Failed to update destination'
+            message: 'Failed to update destination'
         });
     }
-}
+};
 
 /**
  * Delete destination by id
  * @param {Object} req - The request object
  * @param {Object} res - The response object
  */
-
 const deleteDestinationById = async (req, res) => {
     try {
-        const { destinationId } = req.body;
+        const { destinationId } = req.params;
+        const updatedBy = req.user?.user_id;
+        const timestamp = dayjs().format('YYYY-MM-DD HH:mm:ss');
+
         if (!destinationId) {
-            throw new Error('Missing required fields');
+            return res.status(400).json({
+                success: false,
+                message: 'Missing required fields'
+            });
         }
-        const sql = 'UPDATE destinations SET status = "D" WHERE destination_id = ?';
-        const result = await db.run(sql, [destinationId]);
-        return res.json({
-            code: 200,
-            success: true,
-            message: 'Destination deleted successfully',
-            result
-        })
+
+        const sql = 'UPDATE destinations SET status = "D", updated_at = ?, updated_by = ? WHERE destination_id = ?';
+        db.run(sql, [timestamp, updatedBy, destinationId], async function(err) {
+            if (err) {
+                console.error('Error deleting destination:', err);
+                return res.status(500).json({
+                    success: false,
+                    message: 'Failed to delete destination'
+                });
+            }
+
+            if (this.changes === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Destination not found'
+                });
+            }
+
+            return res.json({
+                success: true,
+                message: 'Destination deleted successfully'
+            });
+        });
     } catch (error) {
         console.error('Error deleting destination:', error);
-        return res.json({
-            code: 500,
+        return res.status(500).json({
             success: false,
-            message: error.message || 'Failed to delete destination'
-        })
+            message: 'Failed to delete destination'
+        });
     }
-}
-
-/**
- * Delete all destinations by account id
- * @param {Object} req - The request object
- * @param {Object} res - The response object
- */
-
-const deleteAllDestinationsByAccountId = async (req, res) => {
-    try {
-        const { accountId } = req.body;
-        if (!accountId) {
-            throw new Error('Missing required fields');
-        }
-        const sql = 'UPDATE destinations SET status = "D" WHERE account_id = ?';
-        const result = await db.run(sql, [accountId]);
-        return res.json({
-            code: 200,
-            success: true,
-            message: 'All destinations deleted successfully',
-            result
-        })
-    } catch (error) {
-        console.error('Error deleting all destinations by account id:', error.message);
-        return res.json({
-            code: 500,
-            success: false,
-            message: error.message || 'Failed to delete all destinations by account id'
-        })
-    }
-}
+};
 
 module.exports = {
     createDestination,
-    getAllDestinations,
+    getDestinationsByAccountId,
     getDestinationById,
     updateDestinationById,
-    deleteDestinationById,
-    deleteAllDestinationsByAccountId
-}
+    deleteDestinationById
+};
