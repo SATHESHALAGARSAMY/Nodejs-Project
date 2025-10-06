@@ -1,9 +1,16 @@
 const express = require("express");
 const log = require("../models/log");
-const authenticateApiKey = require("../../middleware/apiKey");
+const { authenticate } = require("../../middleware/auth");
+const { logValidation } = require("../../middleware/validators");
 const router = express.Router();
 
-router.post('/incoming_data', authenticateApiKey.authenticateApiKey, log.createLog);
-router.get('/getLogs', authenticateApiKey.authenticateApiKey, log.getLogs);
+// Get logs with filtering - Requires authentication
+router.get('/', authenticate, logValidation.filter, log.getLogs);
+
+// Get log by event ID - Requires authentication
+router.get('/event/:eventId', authenticate, log.getLogByEventId);
+
+// Get log statistics - Requires authentication
+router.get('/stats', authenticate, log.getLogStats);
 
 module.exports = router;
