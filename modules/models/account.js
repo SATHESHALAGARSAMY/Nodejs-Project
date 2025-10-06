@@ -1,101 +1,173 @@
 const { getDatabase } = require('../../db');
 const dayjs = require('dayjs');
-const apiKey = require("../../middleware/apiKey");
-const { createLog } = require('./log');
+const { generateApiKey } = require("../../middleware/apiKey");
+const { v4: uuidv4 } = require('uuid');
 
 const db = getDatabase();
 
 /**
  * Create a new account
- * @param {Object} req - Email, account_id, account_name, website, app_secret_token
+ * @param {Object} req - Email, account_name, website
  * @param {Object} res - Account will be created successfully
  */
 const createAccount = async (req, res) => {
     try {
-        const { accountId, email, accountName, website } = req.body;
-        if (!accountId || !email || !accountName || !website || !appSecretToken) {
-            throw new Error('Missing required fields');
+        const { email, accountName, website } = req.body;
+        const createdBy = req.user?.user_id;
+        
+        if (!email || !accountName) {
+            return res.status(400).json({
+                success: false,
+                message: 'Email and account name are required'
+            });
         }
+
         // Check if the email already exists
         const checkEmailSql = 'SELECT COUNT(*) as count FROM accounts WHERE email = ?';
-        const emailCheckResult = await db.get(checkEmailSql, [email]);
-        if (emailCheckResult.count > 0) {
-            throw new Error('Email already exists');
-        }
-        //generate app_secret_token
-        let appSecretToken = apiKey.generateApiKey();
-        //Insert logs
-        const log = await createLog({
-            accountId: accountId,
-            destinationId: 1,
-            receivedTimestamp: dayjs().format('YYYY-MM-DD HH:mm:ss'),
-            receivedData: JSON.stringify({ accountId: accountId, email: email, accountName: accountName, website: website, appSecretToken: appSecretToken }),
-            status: 'success'
+        db.get(checkEmailSql, [email], (err, emailCheckResult) => {
+            if (err) {
+                console.error('Database error:', err);
+                return res.status(500).json({
+                    success: false,
+                    message: 'Database error'
+                });
+            }
+
+            if (emailCheckResult.count > 0) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Email already exists'
+                });
+            }
+
+            // Generate unique account_id and app_secret_token
+            const accountId = uuidv4();
+            const appSecretToken = generateApiKey();
+            const timestamp = dayjs().format('YYYY-MM-DD HH:mm:ss');
+
+            // Create a new account
+            const sql = 'INSERT INTO accounts (account_id, email, account_name, app_secret_token, website, created_at, updated_at, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)';
+            db.run(sql, [accountId, email, accountName, appSecretToken, website, timestamp, timestamp, createdBy], function(err) {
+                if (err) {
+                    console.error('Error creating account:', err);
+                    return res.status(500).json({
+                        success: false,
+                        message: 'Failed to create account'
+                    });
+                }
+
+                return res.status(200).json({
+                    success: true,
+                    message: 'Account created successfully',
+                    data: {
+                        accountId,
+                        email,
+                        accountName,
+                        appSecretToken,
+                        website
+                    }
+                });
+            });
         });
-        if(log.status === 'error'){
-            throw new Error('Failed to create log');
-        }
-        // Create a new account
-        const sql = 'INSERT INTO accounts ( account_id, email, account_name, website, app_secret_token, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)';
-        const result = await db.run(sql, [accountId, email, accountName, website, appSecretToken, new Date(), new Date()]);
-        
-        return res.json({
-            code: 200,
-            success: true,
-            message: 'Account created successfully',
-            result
-        })
     } catch (error) {
         console.error('Error creating account:', error);
-        return res.json({
-            code: 500,
+        return res.status(500).json({
             success: false,
-            message: error.message || 'Failed to create account'
-        })
+            message: 'Failed to create account'
+        });
     }
-}
+};
 
 /**
- * Get accounts by date
- * @param {Object} req - date
+ * Get all accounts with search and filter
+ * @param {Object} req - Query parameters
  * @param {Object} res - Accounts will be fetched successfully
  * @returns {Object} - Accounts Details
  */
-const getAccounts = async (req, res) => {
+const getAllAccounts = async (req, res) => {
     try {
-        const { date } = req.params;
-        const sql = 'SELECT * FROM accounts WHERE created_at = ? AND status = "Y"';
-        const result = await db.all(sql, [dayjs(date).format('YYYY-MM-DD')]);
-        if (!result) {
-            throw new Error('No accounts found');
+        const { search, startDate, endDate, page = 1, limit = 10 } = req.query;
+        const offset = (page - 1) * limit;
+
+        let whereClauses = ['status = "Y"'];
+        let params = [];
+
+        if (search) {
+            whereClauses.push('(account_name LIKE ? OR email LIKE ?)');
+            params.push(`%${search}%`, `%${search}%`);
         }
-        let accountData = [];
-        for(const data of result){
-            accountData.push({
-                accountId: data.account_id,
-                email: data.email,
-                accountName: data.account_name,
-                website: data.website,
-                appSecretToken: data.app_secret_token,
-                createdAt: data.created_at,
-                updatedAt: data.updated_at
+
+        if (startDate && endDate) {
+            whereClauses.push('DATE(created_at) BETWEEN ? AND ?');
+            params.push(startDate, endDate);
+        }
+
+        const whereClause = whereClauses.join(' AND ');
+
+        // Get total count
+        const countSql = `SELECT COUNT(*) as count FROM accounts WHERE ${whereClause}`;
+        db.get(countSql, params, (err, countResult) => {
+            if (err) {
+                console.error('Database error:', err);
+                return res.status(500).json({
+                    success: false,
+                    message: 'Database error'
+                });
+            }
+
+            const totalCount = countResult.count;
+
+            // Get paginated results
+            const sql = `SELECT account_id, email, account_name, app_secret_token, website, created_at, updated_at 
+                         FROM accounts 
+                         WHERE ${whereClause} 
+                         ORDER BY created_at DESC 
+                         LIMIT ? OFFSET ?`;
+            
+            db.all(sql, [...params, parseInt(limit), parseInt(offset)], async (err, accounts) => {
+                if (err) {
+                    console.error('Database error:', err);
+                    return res.status(500).json({
+                        success: false,
+                        message: 'Database error'
+                    });
+                }
+
+                const accountData = accounts.map(data => ({
+                    accountId: data.account_id,
+                    email: data.email,
+                    accountName: data.account_name,
+                    appSecretToken: data.app_secret_token,
+                    website: data.website,
+                    createdAt: data.created_at,
+                    updatedAt: data.updated_at
+                }));
+
+                const response = {
+                    data: accountData,
+                    pagination: {
+                        total: totalCount,
+                        page: parseInt(page),
+                        limit: parseInt(limit),
+                        totalPages: Math.ceil(totalCount / limit)
+                    }
+                };
+
+                return res.json({
+                    success: true,
+                    message: 'Accounts fetched successfully',
+                    ...response
+                });
             });
-        }   
-        return res.json({
-            code: 200,
-            success: true,
-            message: 'Accounts fetched successfully',
-            data: accountData
         });
     } catch (error) {
         console.error('Error fetching accounts:', error);
-        return res.json({
-            code: 500,
+        return res.status(500).json({
             success: false,
-            message: error.message || 'Failed to fetch accounts'
+            message: 'Failed to fetch accounts'
         });
     }
-}
+};
 
 /**
  * Get account by id
@@ -105,65 +177,76 @@ const getAccounts = async (req, res) => {
 const getAccountById = async (req, res) => {
     try {
         const { accountId } = req.params;
-        const sql = 'SELECT * FROM accounts WHERE account_id = ? AND status = "Y"';
-        const result = await db.get(sql, [accountId]);
-        if (!result) {
-            throw new Error('Account not found');
-        }
-        let accountData = [];
-        for(const data of result){
-            accountData.push({
-                accountId: data.account_id,
-                email: data.email,
-                accountName: data.account_name,
-                website: data.website,
-                appSecretToken: data.app_secret_token,
-                createdAt: data.created_at,
-                updatedAt: data.updated_at
+
+        const sql = 'SELECT account_id, email, account_name, app_secret_token, website, created_at, updated_at FROM accounts WHERE account_id = ? AND status = "Y"';
+        db.get(sql, [accountId], async (err, account) => {
+            if (err) {
+                console.error('Database error:', err);
+                return res.status(500).json({
+                    success: false,
+                    message: 'Database error'
+                });
+            }
+
+            if (!account) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Account not found'
+                });
+            }
+
+            const accountData = {
+                accountId: account.account_id,
+                email: account.email,
+                accountName: account.account_name,
+                appSecretToken: account.app_secret_token,
+                website: account.website,
+                createdAt: account.created_at,
+                updatedAt: account.updated_at
+            };
+
+            return res.json({
+                success: true,
+                message: 'Account fetched successfully',
+                data: accountData
             });
-        }
-        return res.json({
-            code: 200,
-            success: true,
-            message: 'Account fetched successfully',
-            data: accountData
-        })
+        });
     } catch (error) {
         console.error('Error fetching account:', error);
-        return res.json({
-            code: 500,
+        return res.status(500).json({
             success: false,
-            message: error.message || 'Failed to fetch account'
-        })
+            message: 'Failed to fetch account'
+        });
     }
-}
+};
 
 /**
  * Update account by id
- * @param {Object} req - account_id, email, account_name, website, app_secret_token
+ * @param {Object} req - account_id, email, account_name, website
  * @param {Object} res - Account will be updated successfully
  */
-
 const updateAccountById = async (req, res) => {
     try {
         const { accountId } = req.params;
+        const updatedBy = req.user?.user_id;
+        
         if (!accountId) {
-            throw new Error('Account ID is required');
+            return res.status(400).json({
+                success: false,
+                message: 'Account ID is required'
+            });
         }
 
         // Prepare the fields to update
         const fields = [];
         const values = [];
 
-        // Map of field names to request body properties
         const fieldMap = {
             email: 'email',
             account_name: 'accountName',
-            website: 'website',
-            app_secret_token: 'appSecretToken'
+            website: 'website'
         };
 
-        // Iterate over the field map to populate fields and values
         for (const [field, prop] of Object.entries(fieldMap)) {
             if (req.body[prop]) {
                 fields.push(`${field} = ?`);
@@ -172,74 +255,123 @@ const updateAccountById = async (req, res) => {
         }
 
         if (fields.length === 0) {
-            throw new Error('No fields to update');
+            return res.status(400).json({
+                success: false,
+                message: 'No fields to update'
+            });
         }
 
-        // Add updated_at field
+        // Add updated_at and updated_by fields
         fields.push('updated_at = ?');
-        values.push(new Date());
+        fields.push('updated_by = ?');
+        values.push(dayjs().format('YYYY-MM-DD HH:mm:ss'));
+        values.push(updatedBy);
 
         // Add accountId to the values array for the WHERE clause
         values.push(accountId);
 
-        const log = await createLog({
-            accountId: accountId,
-            destinationId: 1,
-            receivedTimestamp: dayjs().format('YYYY-MM-DD HH:mm:ss'),
-            receivedData: JSON.stringify(req.body),
-            status: 'success'
-        });
-        if(log.status === 'error'){
-            throw new Error('Failed to create log');
-        }
         const sql = `UPDATE accounts SET ${fields.join(', ')} WHERE account_id = ? AND status = "Y"`;
-        const result = await db.run(sql, values);
-        return res.json({
-            code: 200,
-            success: true,
-            message: 'Account updated successfully',
-            result
+        db.run(sql, values, async function(err) {
+            if (err) {
+                console.error('Error updating account:', err);
+                return res.status(500).json({
+                    success: false,
+                    message: 'Failed to update account'
+                });
+            }
+
+            if (this.changes === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Account not found'
+                });
+            }
+
+            return res.json({
+                success: true,
+                message: 'Account updated successfully'
+            });
         });
     } catch (error) {
         console.error('Error updating account:', error);
-        return res.json({
-            code: 500,
+        return res.status(500).json({
             success: false,
-            message: error.message || 'Failed to update account'
+            message: 'Failed to update account'
         });
     }
-}
+};
+
 /**
- * Delete account by id
+ * Delete account by id (soft delete with cascade)
  * @param {Object} req - account_id
  * @param {Object} res - Account will be deleted successfully
  */
 const deleteAccountById = async (req, res) => {
     try {
         const { accountId } = req.params;
-        const sql = 'UPDATE accounts SET status = "D" WHERE account_id = ?';
-        const result = await db.run(sql, [accountId]);
-        if (!result) {
-            throw new Error('Account not found');
-        }
-        return res.json({
-            code: 200,
-            success: true,
-            message: 'Account deleted successfully',
-            result
-        })
+        const updatedBy = req.user?.user_id;
+        const timestamp = dayjs().format('YYYY-MM-DD HH:mm:ss');
+
+        db.serialize(() => {
+            db.run('BEGIN TRANSACTION');
+
+            // Soft delete account
+            db.run('UPDATE accounts SET status = "D", updated_at = ?, updated_by = ? WHERE account_id = ?', 
+                [timestamp, updatedBy, accountId], function(err) {
+                if (err) {
+                    db.run('ROLLBACK');
+                    console.error('Error deleting account:', err);
+                    return res.status(500).json({
+                        success: false,
+                        message: 'Failed to delete account'
+                    });
+                }
+
+                if (this.changes === 0) {
+                    db.run('ROLLBACK');
+                    return res.status(404).json({
+                        success: false,
+                        message: 'Account not found'
+                    });
+                }
+
+                // Soft delete associated destinations
+                db.run('UPDATE destinations SET status = "D", updated_at = ?, updated_by = ? WHERE account_id = ?', 
+                    [timestamp, updatedBy, accountId]);
+
+                // Soft delete associated account members
+                db.run('UPDATE account_members SET status = "D", updated_at = ?, updated_by = ? WHERE account_id = ?', 
+                    [timestamp, updatedBy, accountId]);
+
+                db.run('COMMIT', async (err) => {
+                    if (err) {
+                        db.run('ROLLBACK');
+                        console.error('Error committing transaction:', err);
+                        return res.status(500).json({
+                            success: false,
+                            message: 'Failed to delete account'
+                        });
+                    }
+
+                    return res.json({
+                        success: true,
+                        message: 'Account and associated data deleted successfully'
+                    });
+                });
+            });
+        });
     } catch (error) {
         console.error('Error deleting account:', error);
-        return res.json({
-            code: 500,
+        return res.status(500).json({
             success: false,
-            message: error.message || 'Failed to delete account'
-        })
+            message: 'Failed to delete account'
+        });
     }
-}
+};
+
 module.exports = {
     createAccount,
-    getAccounts,
+    getAllAccounts,
     getAccountById,
     updateAccountById,
     deleteAccountById
