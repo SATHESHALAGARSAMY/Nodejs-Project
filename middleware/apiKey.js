@@ -1,6 +1,7 @@
 const crypto = require("crypto");
-const db = require("../db");
+const { getDatabase } = require("../db");
 const CryptoJS = require('crypto-js');
+const jwt = require('jsonwebtoken');
 const JWT_SECRET = process.env.JWT_SECRET || 'd1e622507595486ee06db24b1debf11064edd2ba';
 
 // Function to generate an API key
@@ -20,27 +21,32 @@ const authenticateApiKey = async (req, res, next) => {
         .status(403)
         .json({ message: "Access denied, no API key provided" });
     }
+    const db = getDatabase();
     const api_user_details =
-      "SELECT account_id,email,account_name,website,app_secret_token, r_status_code FROM accounts WHERE app_secret_token = ? AND status = 'Y'";
+      "SELECT account_id,email,account_name,website,app_secret_token,status FROM accounts WHERE app_secret_token = ? AND status = 'Y'";
   
-    let api_key_data = await db.get(api_user_details, [apiKey]);
-    if (api_key_data.length === 0) {
+    db.get(api_user_details, [apiKey], (err, api_key_data) => {
+      if (err) {
+        return res.status(500).json({ code: 500, message: "Database error" });
+      }
+      if (!api_key_data) {
         return res.status(401).json({ code: 401, message: "Invalid API key" });
-    }
-    if(api_key_data.length > 0 && api_key_data?.[0]?.status != 'Y'){
-      return res.json({ 
-        code: 401, 
-        success: false, 
-        message: "Account Deactivated" 
-      });
-    }
-    req.body.user_info = {
-      account_id: api_key_data[0].account_id,
-      email: api_key_data[0].email,
-      account_name: api_key_data[0].account_name,
-      website: api_key_data[0].website,
-    }; // Add user info to request
-        next();
+      }
+      if(api_key_data.status != 'Y'){
+        return res.json({ 
+          code: 401, 
+          success: false, 
+          message: "Account Deactivated" 
+        });
+      }
+      req.user_info = {
+        account_id: api_key_data.account_id,
+        email: api_key_data.email,
+        account_name: api_key_data.account_name,
+        website: api_key_data.website,
+      }; // Add user info to request
+      next();
+    });
   };
 
   /**
