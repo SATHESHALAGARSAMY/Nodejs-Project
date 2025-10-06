@@ -1,12 +1,22 @@
 const express = require("express");
 const account = require("../models/account");
-const authenticateApiKey = require("../../middleware/apiKey");
+const { authenticate, authorize } = require("../../middleware/auth");
+const { accountValidation } = require("../../middleware/validators");
 const router = express.Router();
 
-// Define the POST route for creating an account
-router.post('/createAccount',account.createAccount);
-router.get('/getAccounts', authenticateApiKey.authenticateApiKey, account.getAccounts);
-router.get('/getAccountById/:accountId', authenticateApiKey.authenticateApiKey, account.getAccountById);
-router.put('/updateAccountById/:accountId', authenticateApiKey.authenticateApiKey, account.updateAccountById);
-router.post('/deleteAccountById', authenticateApiKey.authenticateApiKey, account.deleteAccountById);
+// Create account - Admin only
+router.post('/create', authenticate, authorize('Admin'), accountValidation.create, account.createAccount);
+
+// Get all accounts with search/filter - Requires authentication
+router.get('/', authenticate, account.getAllAccounts);
+
+// Get account by ID - Requires authentication
+router.get('/:accountId', authenticate, accountValidation.getById, account.getAccountById);
+
+// Update account - Admin can update any, Normal user can update only their account
+router.put('/:accountId', authenticate, accountValidation.update, account.updateAccountById);
+
+// Delete account - Admin only
+router.delete('/:accountId', authenticate, authorize('Admin'), accountValidation.getById, account.deleteAccountById);
+
 module.exports = router;
